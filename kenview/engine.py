@@ -67,36 +67,28 @@ class Engine(QThread):
         self.capture = AudioCaptureThread(self.loopback_buf, self.mic_buf)
         self.capture.start()
 
-        # 2. Deepgram websocket on its own asyncio loop thread
-        dg_key = self.store.get("deepgram_api_key")
-        self.dg_loop = asyncio.new_event_loop()
-        self.audio_q = asyncio.Queue()
-
-        def run_dg_loop():
-            asyncio.set_event_loop(self.dg_loop)
-            self.dg_loop.run_forever()
-
-        t = threading.Thread(target=run_dg_loop, daemon=True)
-        t.start()
-
-        self.dg = DeepgramClient(dg_key, self._on_final_text, self.dg_loop)
-        asyncio.run_coroutine_threadsafe(
-            self.dg.run(self.audio_q), self.dg_loop
+        # 2. Transcription loop (Deepgram websocket)
+        self.audio_q = queue.Queue()
+        self.dg = DeepgramClient(
+            api_key=self.store.get("deepgram_api_key"),
+            on_final=self._on_final_text
         )
-        self.status.emit("Deepgram connected — listening...")
+        self.dg_loop = threading.Thread(target=self.dg.run, args=(self.audio_q,), daemon=True)
+        self.dg_loop.start()
 
         # 3. LLM detector
         self.detector = QuestionDetector(
-            self.store.get("base_url"),
-            self.store.get_api_key(),
-            self.store.get("reference_text", ""),
+            base_url=self.store.get("base_url"),
+            api_key=self.store.get_api_key(),
+            model=self.store.get("llm_model")
         )
 
-        # 4. Pump loop: relay audio to Deepgram, periodically ask the LLM
+        self.status.emit("Listening...")
         last_detect = time.monotonic()
+
         try:
             while not self._stop.is_set():
-                # Drain loopback (remote participants) -> Deepgram + detect
+                # Drain captured audio -> send to Deepgram
                 data = self.loopback_buf.drain()
                 if data:
                     self.audio_q.put_nowait(data)
@@ -144,15 +136,21 @@ class Engine(QThread):
         self._stop.set()
         if self.capture:
             self.capture.stop()
+            self.capture.wait()
         if self.dg_loop:
-            try:
-                self.dg_loop.call_soon_threadsafe(self.dg_loop.stop)
-            except Exception:
-                pass
+            self.audio_q.put_nowait(None) # Signal Deepgram to stop
+            self.dg_loop.join()
 
-    @pyqtSlot()
-    def restart(self):
+    @pyqtSlot(str, str, str)
+    def restart(self, base_url, api_key, llm_model):
         """Stop and restart the pipeline (e.g. after settings change)."""
         self.stop()
         self.wait(3000)
+        
+        # Re-init LLM detector with new params
+        self.detector = QuestionDetector(
+            base_url=base_url,
+            api_key=api_key,
+            model=llm_model
+        )
         self.start()

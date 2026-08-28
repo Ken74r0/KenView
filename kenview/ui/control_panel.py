@@ -22,10 +22,10 @@ class ControlPanel(QWidget):
     def _init_ui(self):
         lay = QVBoxLayout(self)
 
-        # --- LLM endpoint (OpenAI-compatible) ---
-        lay.addWidget(QLabel("LLM Base URL (OpenAI-compatible /chat/completions):"))
-        self.url_input = QLineEdit(self.store.get("base_url", ""))
-        lay.addWidget(self.url_input)
+        # Model
+        layout.addWidget(QLabel("LLM Model:"))
+        self.model_input = QLineEdit(self.store.get("llm_model"))
+        layout.addWidget(self.model_input)
 
         lay.addWidget(QLabel("LLM API Key (Bearer):"))
         self.key_input = QLineEdit(self.store.get_api_key())
@@ -106,11 +106,16 @@ class ControlPanel(QWidget):
 
     def apply_settings(self):
         self.store.set("base_url", self.url_input.text().strip())
+        self.store.set("llm_model", self.model_input.text().strip())
         self.store.set_api_key(self.key_input.text().strip())
         self.store.set("deepgram_api_key", self.dg_input.text().strip())
         # If engine is running, restart so new creds take effect
         if self.engine.isRunning():
-            self.engine.restart()
+            self.engine.restart(
+                self.url_input.text().strip(),
+                self.key_input.text().strip(),
+                self.model_input.text().strip()
+            )
 
     def toggle_engine(self):
         if self.engine.isRunning():

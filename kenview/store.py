@@ -14,18 +14,23 @@ class Store:
         self.settings = self._load_settings()
 
     def _load_settings(self):
-        if self.settings_path.exists():
-            try:
-                with open(self.settings_path, "r") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {
-            "base_url": "https://api.openai.com/v1",
-            "reference_filename": "",
-            "reference_text": "",
-            "deepgram_api_key": ""
-        }
+            defaults = {
+                "base_url": "https://api.openai.com/v1",
+                "llm_model": "gpt-4o-mini",
+                "reference_filename": "",
+                "reference_text": "",
+                "deepgram_api_key": ""
+            }
+            if self.settings_path.exists():
+                try:
+                    with open(self.settings_path, "r") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            defaults.update(loaded)
+                        return defaults
+                except Exception:
+                    pass
+            return defaults
 
     def save(self):
         with open(self.settings_path, "w") as f:
