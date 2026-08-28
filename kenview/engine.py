@@ -162,7 +162,11 @@ class Engine(QThread):
         self._stop.set()
         if self.capture:
             self.capture.stop()
-            self.capture.wait()
+            # self.capture is an instance of AudioCaptureThread (QThread)
+            # wait() is the correct PyQt method for QThread. 
+            # If it failed, maybe it's not a QThread subclass?
+            if hasattr(self.capture, "wait"):
+                self.capture.wait()
         if self.dg_loop:
             self.audio_q.put_nowait(None) # Signal Deepgram to stop
             self.dg_loop.join()
