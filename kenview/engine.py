@@ -69,11 +69,15 @@ class Engine(QThread):
 
         # 2. Transcription loop (Deepgram websocket)
         self.audio_q = queue.Queue()
+        # Initialize an event loop for the async client
+        dg_loop = asyncio.new_event_loop()
+        
         self.dg = DeepgramClient(
             api_key=self.store.get("deepgram_api_key"),
-            on_final=self._on_final_text
+            on_final_text=self._on_final_text,
+            loop=dg_loop
         )
-        self.dg_loop = threading.Thread(target=self.dg.run, args=(self.audio_q,), daemon=True)
+        self.dg_loop = threading.Thread(target=self._run_dg_loop, args=(dg_loop, self.audio_q), daemon=True)
         self.dg_loop.start()
 
         # 3. LLM detector
@@ -106,7 +110,29 @@ class Engine(QThread):
             self._running = False
             self.status.emit("Engine stopped.")
 
-    # ---- Callbacks ----------------------------------------------------------
+    def _run_dg_loop(self, loop, audio_q):
+        """Runs the async Deepgram client in its own event loop thread."""
+        asyncio.set_event_loop(loop)
+        
+        # We need an async wrapper to bridge the queue to the async client
+        async def main():
+            # A bridge queue between sync thread and async loop
+            aq = asyncio.Queue()
+            
+            # Start the client
+            task = asyncio.create_task(self.dg.run(aq))
+            
+            # Producer: bridge sync queue to async queue
+            async def producer():
+                while True:
+                    data = await loop.run_in_executor(None, audio_q.get)
+                    if data is None: break
+                    await aq.put(data)
+                await aq.put(None)
+            
+            await asyncio.gather(task, producer())
+            
+        loop.run_until_complete(main())
 
     def _on_final_text(self, text: str):
         """Called from the Deepgram recv loop (on the asyncio thread)."""
